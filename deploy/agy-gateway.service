@@ -1,0 +1,23 @@
+[Unit]
+Description=agy-gateway - LAN HTTP gateway to headless agy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agy-gateway
+ExecStart=/usr/bin/node /opt/agy-gateway/server.js
+Restart=on-failure
+RestartSec=3
+# agy resolves its config/auth/log dirs from $HOME, and systemd's minimal
+# service environment does NOT include HOME -- without this line every agy
+# call aborts with "$HOME is not defined". The plex-watcher container hit
+# this silently (2026-08-19); it carries the fix as a drop-in that a
+# container rebuild would lose. Baking it into the versioned unit file
+# closes that hole here.
+Environment=HOME=/root
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

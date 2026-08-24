@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "description": "Zero-dependency HTTP gateway that forwards prompts to the headless agy CLI",
   "scripts": {
-    "test": "node --test src/"
+    "test": "node --test \"src/**/*.test.js\""
   },
   "dependencies": {}
 }
