@@ -20,6 +20,7 @@ lab's Proxmox host. Architecture and API reference live in `README.md`.
 | Service name | `agy-gateway` (systemd; unit file versioned at `deploy/agy-gateway.service`) |
 | Port | `8100` (`GET /health` unauthenticated; everything else needs the bearer token) |
 | `.env` location | `/opt/agy-gateway/.env` — lives ONLY on the container, mode `600`, never in the repo or deploy archive, never overwritten by a deploy |
+| Shared drive | `mp0` mounts pve01's `/mnt/pve-shares/d/agy-gateway` (= this desktop's `D:\agy-gateway` via SMB) at `/mnt/agy-share` — upload/analysis storage; container state, lost on rebuild (recreate per README's provisioning record) |
 
 All commands run from a Git Bash prompt on the Windows desktop, from the
 `C:\git\agy-gateway` repo root.
