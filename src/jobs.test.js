@@ -2,18 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createJobStore } from "./jobs.js";
+import { deferred, tick } from "./testSupport.js";
 
 // Tests drive a fake runner whose run() promise resolution the test
 // controls (deferred pattern) and a fake clock -- no timers, no real agy.
-
-function deferred() {
-  let resolve, reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 function createFakeRunner() {
   const calls = [];
@@ -35,11 +27,6 @@ function createClock(start = 1_000) {
       t += ms;
     },
   };
-}
-
-// Let the .then() continuation attached to the runner promise run.
-function tick() {
-  return new Promise((res) => setImmediate(res));
 }
 
 test("submit returns a job id synchronously and the job starts queued", () => {

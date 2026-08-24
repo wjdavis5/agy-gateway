@@ -28,10 +28,16 @@ const jobStore = createJobStore({ runner, ttlMs: config.jobTtlMs });
 
 // Health probe: `agy --version` runs once at startup and is cached (it
 // won't change under a running gateway); the cheap fs access check runs
-// per health call so `present` recovers if the binary (re)appears.
-const cachedVersion = await execFileAsync(config.agyPath, ["--version"], { timeout: 15_000 })
-  .then(({ stdout }) => stdout.trim() || null)
-  .catch(() => null);
+// per health call so `present` recovers if the binary (re)appears. The
+// probe must NOT gate the listener -- a slow or missing binary would
+// otherwise hold the port closed (connection refused) for up to 15s when
+// a fast "degraded" 503 is the whole point of /health.
+let cachedVersion = null;
+const versionProbe = execFileAsync(config.agyPath, ["--version"], { timeout: 15_000 })
+  .then(({ stdout }) => {
+    cachedVersion = stdout.trim() || null;
+  })
+  .catch(() => {});
 
 async function healthProbe() {
   const present = await access(config.agyPath, constants.X_OK).then(
@@ -46,5 +52,7 @@ await startWebServer({ port: config.port, requestHandler });
 
 setInterval(jobStore.sweep, 3_600_000).unref();
 
+// Awaited only for the log line -- the server is already accepting.
+await versionProbe;
 // Log policy: never prompts/results -- this line and nothing chattier.
 console.log(`agy-gateway listening on port ${config.port} (agy: ${config.agyPath}, version: ${cachedVersion ?? "unknown"})`);

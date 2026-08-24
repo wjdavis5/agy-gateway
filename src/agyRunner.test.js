@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createAgyRunner } from "./agyRunner.js";
+import { deferred } from "./testSupport.js";
 
 // All tests inject a fake execFileImpl (promise-signature, matching the
 // promisified node:child_process execFile the real code defaults to) --
@@ -19,15 +20,6 @@ function agyStdout(structuredOutput, status = "SUCCESS") {
     }),
     stderr: "",
   };
-}
-
-function deferred() {
-  let resolve, reject;
-  const promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 function sleep(ms) {

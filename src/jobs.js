@@ -70,7 +70,12 @@ export function createJobStore({ runner, ttlMs, now = Date.now }) {
         // stranded in queued/running if that ever breaks.
         job.finishedAt = now();
         job.state = "failed";
-        job.error = { ok: false, errorKind: "exit", message: `runner rejected: ${error?.message ?? String(error)}` };
+        job.error = {
+          ok: false,
+          errorKind: "exit",
+          message: `runner rejected: ${error?.message ?? String(error)}`,
+          durationMs: job.finishedAt - job.createdAt,
+        };
       }
     );
 

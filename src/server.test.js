@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { createRequestHandler, buildHealthPayload } from "./server.js";
 import { createJobStore } from "./jobs.js";
+import { deferred, tick } from "./testSupport.js";
 
 // All tests pass plain duck-typed req/res objects -- no sockets, no real
 // runner, no real agy binary -- per the plex webUI.js precedent.
@@ -101,14 +102,6 @@ function makeHandler({
   now,
 } = {}) {
   return createRequestHandler({ config, runner, jobStore, healthProbe, ...(now ? { now } : {}) });
-}
-
-function deferred() {
-  let resolve;
-  const promise = new Promise((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
 }
 
 // --- Auth ---
@@ -292,7 +285,7 @@ test("two concurrent POST /run calls are in flight simultaneously (no handler se
   const p2 = handler(authedReq({ method: "POST", url: "/run", body: JSON.stringify({ prompt: "two" }) }), res2);
 
   // Let both handler invocations reach the runner.
-  await new Promise((res) => setImmediate(res));
+  await tick();
   assert.equal(maxInFlight, 2, "both runs must be in flight at once");
 
   gate.resolve({ ok: true, text: "done", durationMs: 1 });
@@ -335,7 +328,7 @@ test("async flow: submit 202 queued, poll running, poll succeeded", async () => 
 
   const result = { ok: true, agy: { status: "SUCCESS", response: "answer" }, durationMs: 9 };
   gate.resolve(result);
-  await new Promise((res) => setImmediate(res));
+  await tick();
 
   pollRes = makeRes();
   await handler(authedReq({ url: `/jobs/${jobId}` }), pollRes);
