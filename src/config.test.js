@@ -99,3 +99,25 @@ test("a missing .env file is tolerated (ENOENT from the loader is swallowed)", (
   assert.equal(config.agyGatewayToken, "tok");
   assert.deepEqual(seenPaths, ["/nonexistent/.env"]);
 });
+
+test("upload and add-dir settings parse with safe defaults", () => {
+  const base = { AGY_GATEWAY_TOKEN: "t" };
+  const load = (env) => loadConfig({ env, loadEnvFileImpl: () => {} });
+
+  const defaults = load(base);
+  assert.deepEqual(defaults.agyAddDirs, []);
+  assert.equal(defaults.agyUploadDir, null);
+  assert.equal(defaults.agyMaxUploadBytes, 26_214_400);
+
+  const set = load({
+    ...base,
+    AGY_ADD_DIRS: "/mnt/agy-share, /extra",
+    AGY_UPLOAD_DIR: "/mnt/agy-share/uploads",
+    AGY_MAX_UPLOAD_BYTES: "1000",
+  });
+  assert.deepEqual(set.agyAddDirs, ["/mnt/agy-share", "/extra"]);
+  assert.equal(set.agyUploadDir, "/mnt/agy-share/uploads");
+  assert.equal(set.agyMaxUploadBytes, 1000);
+
+  assert.throws(() => load({ ...base, AGY_MAX_UPLOAD_BYTES: "zero" }), /AGY_MAX_UPLOAD_BYTES/);
+});

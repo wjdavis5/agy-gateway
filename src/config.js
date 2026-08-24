@@ -26,6 +26,9 @@ const VALID_EFFORTS = new Set(["low", "medium", "high"]);
  *   agySandbox: boolean,
  *   agyMaxBodyBytes: number,
  *   jobTtlMs: number,
+ *   agyAddDirs: string[],
+ *   agyUploadDir: string|null,
+ *   agyMaxUploadBytes: number,
  * }}
  */
 export function loadConfig({
@@ -101,5 +104,15 @@ export function loadConfig({
     agySandbox: optionalBool("AGY_SANDBOX", false),
     agyMaxBodyBytes: optionalInt("AGY_MAX_BODY_BYTES", 1_048_576),
     jobTtlMs: optionalInt("JOB_TTL_MS", 86_400_000),
+    // Directories agy is granted scoped workspace trust over (--add-dir),
+    // e.g. the mounted upload share. Comma-separated; empty = none.
+    agyAddDirs: optionalString("AGY_ADD_DIRS", "")
+      .split(",")
+      .map((d) => d.trim())
+      .filter((d) => d !== ""),
+    // Where POST /files stores uploads (inside an AGY_ADD_DIRS dir so agy
+    // can read them). null = uploads disabled.
+    agyUploadDir: optionalString("AGY_UPLOAD_DIR", null),
+    agyMaxUploadBytes: optionalInt("AGY_MAX_UPLOAD_BYTES", 26_214_400),
   };
 }

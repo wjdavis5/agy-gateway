@@ -1,5 +1,6 @@
 import http from "node:http";
 import crypto from "node:crypto";
+import { writeFile } from "node:fs/promises";
 
 // The gateway's network surface: bearer-auth'd sync (/run) and async
 // (/jobs) endpoints over the U3 runner, plus an unauthenticated /health.
@@ -81,7 +82,7 @@ async function readBody(req, maxBytes) {
     }
     chunks.push(buf);
   }
-  return { tooLarge: false, raw: Buffer.concat(chunks).toString("utf8") };
+  return { tooLarge: false, raw: Buffer.concat(chunks) };
 }
 
 /**
@@ -157,7 +158,7 @@ export async function buildHealthPayload({ config, runner, jobStore, healthProbe
  * @param {() => number} [params.now]
  * @returns {(req: object, res: object) => Promise<void>}
  */
-export function createRequestHandler({ config, runner, jobStore, healthProbe, now = Date.now }) {
+export function createRequestHandler({ config, runner, jobStore, healthProbe, now = Date.now, fsImpl = { writeFile } }) {
   const startedAtMs = now();
   const tokenHash = sha256(config.agyGatewayToken);
 
@@ -175,7 +176,7 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
       }
       return undefined;
     }
-    const parsed = parseRunRequest(body.raw);
+    const parsed = parseRunRequest(body.raw.toString("utf8"));
     if (!parsed.ok) {
       sendJson(res, 400, { ok: false, error: parsed.error });
       return undefined;
@@ -203,6 +204,39 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
     // an unauthorized caller can't make the server buffer a payload.
     if (!isAuthorized(req.headers?.authorization, tokenHash)) {
       sendJson(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+
+    if (path === "/files") {
+      if (req.method !== "POST") {
+        sendJson(res, 405, { ok: false, error: "method not allowed" });
+        return;
+      }
+      if (!config.agyUploadDir) {
+        sendJson(res, 404, { ok: false, error: "uploads not enabled (set AGY_UPLOAD_DIR)" });
+        return;
+      }
+      const body = await readBody(req, config.agyMaxUploadBytes);
+      if (body.tooLarge) {
+        sendJson(res, 413, { ok: false, error: "file too large" });
+        if (typeof res.once === "function" && typeof req.destroy === "function") {
+          res.once("finish", () => req.destroy());
+        }
+        return;
+      }
+      if (body.raw.length === 0) {
+        sendJson(res, 400, { ok: false, error: "empty upload body" });
+        return;
+      }
+      // Only the extension of a caller-suggested ?name= survives; the
+      // stored name is server-minted, so no caller input reaches the
+      // filesystem path in any other form (no traversal surface).
+      const suggested = url.searchParams.get("name") ?? "";
+      const extMatch = suggested.match(/\.([A-Za-z0-9]{1,8})$/);
+      const name = crypto.randomUUID() + (extMatch ? `.${extMatch[1].toLowerCase()}` : "");
+      const containerPath = `${config.agyUploadDir.replace(/\/+$/, "")}/${name}`;
+      await fsImpl.writeFile(containerPath, body.raw);
+      sendJson(res, 201, { ok: true, file: { name, containerPath, bytes: body.raw.length } });
       return;
     }
 

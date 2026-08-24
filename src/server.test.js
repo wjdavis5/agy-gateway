@@ -598,3 +598,82 @@ test("the 500 wrapper does not rewrite headers already sent", async () => {
   assert.equal(wroteHead, false, "writeHead must not run after headers were sent");
   assert.equal(ended, true, "the response must still be ended");
 });
+
+// --- POST /files (uploads) ---
+
+function uploadHandler({ writes = [], uploadDir = "/up", maxUploadBytes = 100 } = {}) {
+  return createRequestHandler({
+    config: baseConfig({ agyUploadDir: uploadDir, agyMaxUploadBytes: maxUploadBytes }),
+    runner: okRunner(),
+    jobStore: emptyJobStore(),
+    healthProbe: async () => ({ present: true, version: "x" }),
+    fsImpl: {
+      writeFile: async (path, buf) => {
+        writes.push({ path, bytes: buf.length });
+      },
+    },
+  });
+}
+
+test("upload happy path: raw body stored under a server-minted uuid name with sanitized extension", async () => {
+  const writes = [];
+  const handler = uploadHandler({ writes });
+  const res = makeRes();
+
+  await handler(
+    authedReq({ method: "POST", url: "/files?name=..%2F..%2Fetc%2Fpasswd.png", body: "fakepngbytes" }),
+    res
+  );
+  assert.equal(res.statusCode, 201);
+  const { file } = res.json();
+  assert.match(file.name, /^[0-9a-f-]{36}\.png$/);
+  assert.ok(!file.name.includes("/") && !file.name.includes(".."));
+  assert.equal(file.containerPath, `/up/${file.name}`);
+  assert.equal(file.bytes, 12);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].path, `/up/${file.name}`);
+  assert.equal(writes[0].bytes, 12);
+});
+
+test("upload with no usable extension stores a bare uuid name", async () => {
+  const writes = [];
+  const handler = uploadHandler({ writes });
+  const res = makeRes();
+  await handler(authedReq({ method: "POST", url: "/files", body: "data" }), res);
+  assert.equal(res.statusCode, 201);
+  assert.match(res.json().file.name, /^[0-9a-f-]{36}$/);
+});
+
+test("upload over the upload cap gets 413 and nothing is written", async () => {
+  const writes = [];
+  const handler = uploadHandler({ writes, maxUploadBytes: 4 });
+  const res = makeRes();
+  await handler(authedReq({ method: "POST", url: "/files", body: "toolarge" }), res);
+  assert.equal(res.statusCode, 413);
+  assert.equal(writes.length, 0);
+});
+
+test("upload with an empty body gets 400", async () => {
+  const writes = [];
+  const handler = uploadHandler({ writes });
+  const res = makeRes();
+  await handler(authedReq({ method: "POST", url: "/files" }), res);
+  assert.equal(res.statusCode, 400);
+  assert.equal(writes.length, 0);
+});
+
+test("uploads disabled gets 404; wrong method 405; auth still required", async () => {
+  const disabled = makeHandler();
+  let res = makeRes();
+  await disabled(authedReq({ method: "POST", url: "/files", body: "d" }), res);
+  assert.equal(res.statusCode, 404);
+
+  const handler = uploadHandler();
+  res = makeRes();
+  await handler(authedReq({ method: "GET", url: "/files" }), res);
+  assert.equal(res.statusCode, 405);
+
+  res = makeRes();
+  await handler(makeReq({ method: "POST", url: "/files", body: "d" }), res);
+  assert.equal(res.statusCode, 401);
+});

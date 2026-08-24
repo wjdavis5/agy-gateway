@@ -22,6 +22,7 @@ const runner = createAgyRunner({
   maxTimeoutMs: config.agyTimeoutMaxMs,
   defaultEffort: config.agyEffort,
   sandbox: config.agySandbox,
+  addDirs: config.agyAddDirs,
 });
 
 const jobStore = createJobStore({ runner, ttlMs: config.jobTtlMs });

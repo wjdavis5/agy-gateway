@@ -72,6 +72,34 @@ and every job is lost on a service restart — poll returns 404 after either.
 `GET /jobs` lists recent jobs (ids, states, timestamps only — never prompt
 or result content).
 
+### POST /files — upload for file/image analysis
+
+Raw request body in, server-minted filename out (capped at
+`AGY_MAX_UPLOAD_BYTES`, default 25 MB; 404 when `AGY_UPLOAD_DIR` is
+unset). Only the extension of an optional `?name=` hint survives — the
+stored name is a UUID, so no caller input shapes the filesystem path.
+
+```bash
+curl -s -X POST "http://192.168.0.92:8100/files?name=photo.jpg" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/octet-stream" \
+  --data-binary @photo.jpg
+# -> 201 {"ok": true, "file": {"name": "<uuid>.jpg", "containerPath": "/mnt/agy-share/uploads/<uuid>.jpg", "bytes": 12345}}
+```
+
+Then reference `containerPath` in a prompt:
+
+```bash
+curl -s -X POST http://192.168.0.92:8100/run -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Describe the image at /mnt/agy-share/uploads/<uuid>.jpg"}'
+```
+
+Uploads land on this desktop's `D:\agy-gateway\uploads` (the container
+path is a CIFS mount of that folder), so you can also just drop files
+there over SMB/Explorer and reference `/mnt/agy-share/uploads/<name>`
+directly — the upload endpoint and the shared folder are two doors to the
+same directory. Files are never auto-deleted; clean up via either door.
+
 ### GET /health — unauthenticated
 
 `200` healthy / `503` degraded (agy binary missing). Payload includes the
@@ -108,6 +136,9 @@ most — never prompt bodies, schemas, or agy results.
 | `AGY_SANDBOX` | false | Pass `--sandbox` on every run |
 | `AGY_MAX_BODY_BYTES` | 1048576 | Request body cap |
 | `JOB_TTL_MS` | 86400000 | Finished-job retention |
+| `AGY_ADD_DIRS` | (empty) | Comma-separated dirs passed to agy as `--add-dir` (scoped workspace trust — file reads under these dirs are auto-approved headless; everything else stays denied). Set to `/mnt/agy-share` here |
+| `AGY_UPLOAD_DIR` | (unset = uploads off) | Where `POST /files` writes; must sit under an `AGY_ADD_DIRS` dir. Set to `/mnt/agy-share/uploads` here |
+| `AGY_MAX_UPLOAD_BYTES` | 26214400 | Upload size cap (25 MB) |
 
 ## Container provisioning record (2026-08-24)
 
@@ -122,6 +153,17 @@ pct create 105 local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst \
   --net0 name=eth0,bridge=vmbr0,gw=192.168.0.1,ip=192.168.0.92/24 \
   --nameserver 1.1.1.1 --onboot 1 \
   --ssh-public-keys /root/.ssh/authorized_keys
+```
+
+Added 2026-08-24 for file/image analysis — the shared-drive mount
+(`pve01` mounts this desktop's D: over SMB; only the `agy-gateway`
+subfolder is passed in, least-privilege; mount-point changes need a
+`pct reboot`):
+
+```bash
+mkdir -p /mnt/pve-shares/d/agy-gateway/uploads
+pct set 105 -mp0 /mnt/pve-shares/d/agy-gateway,mp=/mnt/agy-share
+pct reboot 105
 ```
 
 Memory is 2x the plex-watcher's because parallel agy processes cost real

@@ -25,7 +25,13 @@ import { promisify } from "node:util";
 //      `structured_output` is the trusted field when a schema was passed.
 //   5. A missing binary surfaces as error.code === "ENOENT" from execFile;
 //      an execFile-timeout kill surfaces as error.killed === true.
-//   6. Observed non-SUCCESS statuses (live probes on LXC 105): "CANCELED"
+//   6. `--add-dir <dir>` (repeatable) grants scoped workspace trust for
+//      one invocation: file reads under that dir are auto-approved
+//      headlessly, everything else stays denied. Live-verified 2026-08-24
+//      on LXC 105: agy read and correctly described a PNG (shapes + text)
+//      under an --add-dir'd CIFS mount, while the same read without the
+//      flag was denied.
+//   7. Observed non-SUCCESS statuses (live probes on LXC 105): "CANCELED"
 //      -- a tool call needed a permission headless mode cannot prompt for
 //      and was auto-denied (explanation text arrives on stderr, body
 //      response is empty); and "ERROR" -- --sandbox denied a tool call
@@ -93,10 +99,14 @@ export function createAgyRunner({
   maxTimeoutMs = 900_000,
   defaultEffort = "high",
   sandbox = false,
+  addDirs = [],
   execFileImpl = promisify(execFile),
 } = {}) {
   if (typeof agyPath !== "string" || agyPath.trim() === "") {
     throw new Error("createAgyRunner requires a non-empty agyPath");
+  }
+  if (!Array.isArray(addDirs) || addDirs.some((d) => typeof d !== "string" || d.trim() === "")) {
+    throw new Error("createAgyRunner addDirs must be an array of non-empty strings");
   }
 
   let running = 0;
@@ -149,6 +159,7 @@ export function createAgyRunner({
     const args = ["-p", req.prompt, "--output-format", req.outputFormat];
     if (req.jsonSchema !== undefined) args.push("--json-schema", req.jsonSchema);
     args.push("--effort", req.effort);
+    for (const dir of addDirs) args.push("--add-dir", dir);
     args.push("--print-timeout", `${Math.ceil(remainingMs / 1000)}s`);
     if (sandbox) args.push("--sandbox");
 

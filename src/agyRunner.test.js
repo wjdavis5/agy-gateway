@@ -515,3 +515,24 @@ test("an onStart that throws does not break the run or leak the slot", async () 
   assert.equal(secondStarted, true, "slot was released despite the throwing onStart");
   assert.deepEqual(runner.stats(), { running: 0, queued: 0 });
 });
+
+// addDirs (scoped workspace trust for file/image analysis)
+test("addDirs appends repeatable --add-dir arguments; default omits them", async () => {
+  const calls = [];
+  const execFileImpl = async (file, args) => {
+    calls.push(args);
+    return agyStdout({});
+  };
+
+  await createAgyRunner({ agyPath: "agy", addDirs: ["/mnt/agy-share", "/other"], execFileImpl }).run({ prompt: "p" });
+  const args = calls[0];
+  const first = args.indexOf("--add-dir");
+  assert.ok(first > -1);
+  assert.equal(args[first + 1], "/mnt/agy-share");
+  const second = args.indexOf("--add-dir", first + 1);
+  assert.ok(second > first);
+  assert.equal(args[second + 1], "/other");
+
+  await createAgyRunner({ agyPath: "agy", execFileImpl }).run({ prompt: "p" });
+  assert.ok(!calls[1].includes("--add-dir"));
+});
