@@ -2,6 +2,8 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { writeFile } from "node:fs/promises";
 
+import { buildOpenApiSpec } from "./openapi.js";
+
 // The gateway's network surface: bearer-auth'd sync (/run) and async
 // (/jobs) endpoints over the U3 runner, plus an unauthenticated /health.
 //
@@ -158,7 +160,7 @@ export async function buildHealthPayload({ config, runner, jobStore, healthProbe
  * @param {() => number} [params.now]
  * @returns {(req: object, res: object) => Promise<void>}
  */
-export function createRequestHandler({ config, runner, jobStore, healthProbe, now = Date.now, fsImpl = { writeFile } }) {
+export function createRequestHandler({ config, runner, jobStore, healthProbe, now = Date.now, fsImpl = { writeFile }, version = "0.0.0" }) {
   const startedAtMs = now();
   const tokenHash = sha256(config.agyGatewayToken);
 
@@ -184,9 +186,34 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
     return parsed.request;
   }
 
+  // Built once per handler (config is fixed for the process lifetime).
+  let cachedSpec = null;
+
   return async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
     const path = url.pathname;
+
+    // Discovery routes are unauthenticated like /health: the spec reveals
+    // the API's shape, never its token.
+    if (path === "/" || path === "/openapi.json") {
+      if (req.method !== "GET") {
+        sendJson(res, 405, { ok: false, error: "method not allowed" });
+        return;
+      }
+      if (path === "/") {
+        sendJson(res, 200, {
+          ok: true,
+          service: "agy-gateway",
+          version,
+          openapi: "/openapi.json",
+          health: "/health",
+        });
+        return;
+      }
+      cachedSpec ??= buildOpenApiSpec({ config, version });
+      sendJson(res, 200, cachedSpec);
+      return;
+    }
 
     // /health is the one unauthenticated route (KTD8) -- an external
     // monitor gets liveness without holding the token.

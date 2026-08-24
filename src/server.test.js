@@ -677,3 +677,35 @@ test("uploads disabled gets 404; wrong method 405; auth still required", async (
   await handler(makeReq({ method: "POST", url: "/files", body: "d" }), res);
   assert.equal(res.statusCode, 401);
 });
+
+// --- Discovery: GET / and GET /openapi.json ---
+
+test("GET /openapi.json is unauthenticated and serves the spec", async () => {
+  const handler = makeHandler();
+  const res = makeRes();
+  await handler(makeReq({ method: "GET", url: "/openapi.json" }), res);
+  assert.equal(res.statusCode, 200);
+  const spec = res.json();
+  assert.match(spec.openapi, /^3\.1\./);
+  assert.ok(spec.paths["/run"]);
+});
+
+test("GET / is an unauthenticated index pointing at the spec and health", async () => {
+  const handler = makeHandler();
+  const res = makeRes();
+  await handler(makeReq({ method: "GET", url: "/" }), res);
+  assert.equal(res.statusCode, 200);
+  const body = res.json();
+  assert.equal(body.service, "agy-gateway");
+  assert.equal(body.openapi, "/openapi.json");
+  assert.equal(body.health, "/health");
+});
+
+test("non-GET on discovery routes gets 405", async () => {
+  const handler = makeHandler();
+  for (const url of ["/", "/openapi.json"]) {
+    const res = makeRes();
+    await handler(makeReq({ method: "POST", url, body: "{}" }), res);
+    assert.equal(res.statusCode, 405);
+  }
+});

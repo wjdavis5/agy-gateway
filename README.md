@@ -14,7 +14,14 @@ never exposed through the Cloudflare tunnel.
 
 ## API
 
-All endpoints except `GET /health` require `Authorization: Bearer <token>`
+**The API is self-describing:** `GET /` (unauthenticated) returns a tiny
+index, and `GET /openapi.json` serves an OpenAPI 3.1 spec built from the
+live configuration — caps, defaults, and the error taxonomy in the spec
+are the deployed values, not a hand-maintained copy. Point any OpenAPI
+tool (Swagger UI, Bruno, an agent's tool-generation step) at it.
+
+All endpoints except `GET /health`, `GET /`, and `GET /openapi.json`
+require `Authorization: Bearer <token>`
 (token in `/opt/agy-gateway/.env` on the container — container-only, mode
 600, CSPRNG-generated). Request bodies are JSON, capped at 1 MB (413
 beyond). Responses are JSON.

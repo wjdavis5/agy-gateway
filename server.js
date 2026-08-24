@@ -2,7 +2,7 @@
 // All logic lives under src/ (covered by node --test); this file only
 // composes it, per the plex thin-entrypoint convention.
 import { access } from "node:fs/promises";
-import { constants } from "node:fs";
+import { constants, readFileSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -48,7 +48,9 @@ async function healthProbe() {
   return { present, version: cachedVersion };
 }
 
-const requestHandler = createRequestHandler({ config, runner, jobStore, healthProbe });
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
+
+const requestHandler = createRequestHandler({ config, runner, jobStore, healthProbe, version });
 await startWebServer({ port: config.port, requestHandler });
 
 setInterval(jobStore.sweep, 3_600_000).unref();
