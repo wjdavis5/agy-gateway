@@ -206,7 +206,12 @@ export function createAgyRunner({
   /**
    * Validates and runs one request. Never rejects for per-run failures --
    * always resolves a typed result object.
-   * @param {{prompt: string, effort?: string, outputFormat?: string, jsonSchema?: string, timeoutMs?: number}} request
+   *
+   * `onStart` (U4 extension) is invoked exactly once, after the semaphore
+   * slot is acquired and before execFileImpl -- never for bad-request or
+   * queued-timeout paths. The job store uses it to move a job from
+   * "queued" to "running" on real execution start, not on enqueue.
+   * @param {{prompt: string, effort?: string, outputFormat?: string, jsonSchema?: string, timeoutMs?: number, onStart?: () => void}} request
    */
   async function run(request) {
     const startedAt = Date.now();
@@ -216,7 +221,7 @@ export function createAgyRunner({
     if (!request || typeof request !== "object") {
       return failure("bad-request", "request must be an object", 0);
     }
-    const { prompt, effort = defaultEffort, outputFormat = "json", jsonSchema, timeoutMs } = request;
+    const { prompt, effort = defaultEffort, outputFormat = "json", jsonSchema, timeoutMs, onStart } = request;
     if (typeof prompt !== "string" || prompt.trim() === "") {
       return failure("bad-request", "prompt must be a non-empty string", 0);
     }
@@ -243,6 +248,15 @@ export function createAgyRunner({
     }
 
     try {
+      // Execution is genuinely starting (slot held, execFile next). A
+      // throwing callback must not break the run or leak the slot.
+      if (typeof onStart === "function") {
+        try {
+          onStart();
+        } catch {
+          // Observer-only callback: its errors are its own problem.
+        }
+      }
       const remainingMs = Math.max(1, deadline - Date.now());
       return await invoke(
         { prompt, outputFormat, jsonSchema, effort, effectiveTimeoutMs },

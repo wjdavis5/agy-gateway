@@ -360,3 +360,48 @@ test("an invalid outputFormat resolves bad-request without calling execFileImpl"
   assert.equal(result.errorKind, "bad-request");
   assert.equal(called, false);
 });
+
+// 16. onStart callback (U4 extension: lets the job store move a job from
+// queued to running honestly, on real slot acquisition).
+test("onStart fires exactly once after slot acquisition and before execFileImpl; never on queued-timeout or bad-request", async () => {
+  // Ordering: onStart strictly before the execFile call.
+  const events = [];
+  const runner = createAgyRunner({
+    agyPath: "agy",
+    execFileImpl: async () => {
+      events.push("exec");
+      return agyStdout({});
+    },
+  });
+  const ok = await runner.run({ prompt: "p", onStart: () => events.push("start") });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(events, ["start", "exec"], "onStart fires once, before execFileImpl");
+
+  // bad-request: never acquires a slot, never fires onStart.
+  let badRequestStarted = false;
+  const bad = await runner.run({ prompt: "", onStart: () => (badRequestStarted = true) });
+  assert.equal(bad.errorKind, "bad-request");
+  assert.equal(badRequestStarted, false);
+
+  // Queued-timeout: the budget expires while waiting for a slot -- onStart
+  // must never fire because execution never started.
+  const first = deferred();
+  const runner2 = createAgyRunner({
+    agyPath: "agy",
+    maxConcurrent: 1,
+    execFileImpl: (file, args) => (args[1] === "first" ? first.promise : Promise.resolve(agyStdout({}))),
+  });
+  const p1 = runner2.run({ prompt: "first" });
+  let queuedStarted = false;
+  const r2 = await runner2.run({
+    prompt: "second",
+    timeoutMs: 15,
+    onStart: () => (queuedStarted = true),
+  });
+  assert.equal(r2.ok, false);
+  assert.equal(r2.errorKind, "timeout");
+  assert.equal(queuedStarted, false, "onStart must not fire for a run that timed out while queued");
+
+  first.resolve(agyStdout({}));
+  await p1;
+});
