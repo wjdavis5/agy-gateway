@@ -37,6 +37,10 @@ import { promisify } from "node:util";
 //     a tool call the agent can't auto-run is simply not run.
 //   - The plex precedent discards stderr; here every failure keeps a
 //     stderr tail, because agy failure detail lives there.
+//   - The execFile timeout kills with SIGKILL, not the SIGTERM default:
+//     graceful cancel was already out of scope, and a SIGTERM-ignoring
+//     wedged child would never settle the promise -- permanently leaking
+//     a concurrency slot with no crash to trigger a systemd restart.
 //   - The timeout budget starts at ENQUEUE and spans queue wait plus
 //     execution: a request that expires while queued is removed and
 //     resolved as a timeout without ever spawning a process, and a
@@ -154,6 +158,7 @@ export function createAgyRunner({
       ({ stdout, stderr } = await execFileImpl(agyPath, args, {
         timeout: remainingMs,
         maxBuffer: 10 * 1024 * 1024,
+        killSignal: "SIGKILL",
       }));
     } catch (error) {
       const durationMs = Date.now() - startedAt;
@@ -231,6 +236,19 @@ export function createAgyRunner({
         `outputFormat must be "json" or "text", got ${JSON.stringify(outputFormat)}`,
         0
       );
+    }
+    if (timeoutMs !== undefined && !(Number.isInteger(timeoutMs) && timeoutMs >= 1)) {
+      return failure(
+        "bad-request",
+        `timeoutMs must be an integer >= 1, got ${String(timeoutMs)}`,
+        0
+      );
+    }
+    if (effort !== undefined && (typeof effort !== "string" || effort.trim() === "")) {
+      return failure("bad-request", "effort must be a non-empty string", 0);
+    }
+    if (jsonSchema !== undefined && typeof jsonSchema !== "string") {
+      return failure("bad-request", "jsonSchema must be a string", 0);
     }
 
     const effectiveTimeoutMs = Math.min(timeoutMs ?? defaultTimeoutMs, maxTimeoutMs);

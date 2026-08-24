@@ -98,6 +98,24 @@ test("sandbox:true appends --sandbox; default omits it", async () => {
   assert.ok(!calls[1].includes("--sandbox"));
 });
 
+// 3b. Kill signal
+test("execFile options include killSignal SIGKILL so a wedged child can never leak a slot", async () => {
+  const calls = [];
+  const runner = createAgyRunner({
+    agyPath: "agy",
+    execFileImpl: async (file, args, options) => {
+      calls.push(options);
+      return agyStdout({});
+    },
+  });
+
+  await runner.run({ prompt: "p" });
+  assert.equal(calls[0].killSignal, "SIGKILL");
+  // Alongside the existing timeout + maxBuffer, not replacing them.
+  assert.equal(typeof calls[0].timeout, "number");
+  assert.equal(calls[0].maxBuffer, 10 * 1024 * 1024);
+});
+
 // 4. Timeout during execution
 test("an execFile timeout kill resolves errorKind timeout and names the ms", async () => {
   const runner = createAgyRunner({
@@ -353,6 +371,72 @@ test("an invalid outputFormat resolves bad-request without calling execFileImpl"
   assert.equal(called, false);
 });
 
+// 15a. Non-object requests
+test("a non-object request resolves bad-request without calling execFileImpl", async () => {
+  let called = false;
+  const runner = createAgyRunner({
+    agyPath: "agy",
+    execFileImpl: async () => {
+      called = true;
+      return agyStdout({});
+    },
+  });
+
+  for (const bad of [null, undefined, "x", [1]]) {
+    const result = await runner.run(bad);
+    assert.equal(result.ok, false);
+    assert.equal(result.errorKind, "bad-request");
+  }
+  assert.equal(called, false);
+});
+
+// 15b. Option type validation (validator-reproduced: a NaN/string timeoutMs
+// used to reach execFile's timeout option and throw ERR_OUT_OF_RANGE,
+// misclassified as errorKind "exit" instead of "bad-request").
+test("invalid timeoutMs/effort/jsonSchema types resolve bad-request without calling execFileImpl", async () => {
+  let called = false;
+  const runner = createAgyRunner({
+    agyPath: "agy",
+    execFileImpl: async () => {
+      called = true;
+      return agyStdout({});
+    },
+  });
+
+  for (const timeoutMs of ["abc", NaN, 1.5, 0]) {
+    const result = await runner.run({ prompt: "p", timeoutMs });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorKind, "bad-request");
+    assert.match(result.message, /timeoutMs/);
+  }
+
+  const badEffort = await runner.run({ prompt: "p", effort: 42 });
+  assert.equal(badEffort.ok, false);
+  assert.equal(badEffort.errorKind, "bad-request");
+  assert.match(badEffort.message, /effort/);
+
+  const badSchema = await runner.run({ prompt: "p", jsonSchema: {} });
+  assert.equal(badSchema.ok, false);
+  assert.equal(badSchema.errorKind, "bad-request");
+  assert.match(badSchema.message, /jsonSchema/);
+
+  assert.equal(called, false);
+});
+
+// 15c. JSON stdout that parses but is not an object
+test("json-mode stdout of null or an array resolves errorKind bad-output", async () => {
+  for (const stdout of ["null", "[1,2,3]"]) {
+    const runner = createAgyRunner({
+      agyPath: "agy",
+      execFileImpl: async () => ({ stdout, stderr: "" }),
+    });
+    const result = await runner.run({ prompt: "p" });
+    assert.equal(result.ok, false);
+    assert.equal(result.errorKind, "bad-output");
+    assert.match(result.message, /not a JSON object/);
+  }
+});
+
 // 16. onStart callback (U4 extension: lets the job store move a job from
 // queued to running honestly, on real slot acquisition).
 test("onStart fires exactly once after slot acquisition and before execFileImpl; never on queued-timeout or bad-request", async () => {
@@ -396,4 +480,38 @@ test("onStart fires exactly once after slot acquisition and before execFileImpl;
 
   first.resolve(agyStdout({}));
   await p1;
+});
+
+// 17. Throwing onStart (observer-only: its errors are its own problem)
+test("an onStart that throws does not break the run or leak the slot", async () => {
+  const first = deferred();
+  let secondStarted = false;
+  const runner = createAgyRunner({
+    agyPath: "agy",
+    maxConcurrent: 1,
+    execFileImpl: (file, args) => {
+      if (args[1] === "first") return first.promise;
+      secondStarted = true;
+      return Promise.resolve(agyStdout({}));
+    },
+  });
+
+  const p1 = runner.run({
+    prompt: "first",
+    onStart: () => {
+      throw new Error("observer blew up");
+    },
+  });
+  const p2 = runner.run({ prompt: "second" });
+  await sleep(0);
+  assert.equal(secondStarted, false, "slot is held while the first run executes");
+
+  first.resolve(agyStdout({}));
+  const r1 = await p1;
+  assert.equal(r1.ok, true, "a throwing onStart must not fail the run");
+
+  const r2 = await p2;
+  assert.equal(r2.ok, true);
+  assert.equal(secondStarted, true, "slot was released despite the throwing onStart");
+  assert.deepEqual(runner.stats(), { running: 0, queued: 0 });
 });

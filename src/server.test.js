@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { createRequestHandler, buildHealthPayload } from "./server.js";
+import { createRequestHandler, buildHealthPayload, startWebServer } from "./server.js";
 import { createJobStore } from "./jobs.js";
 import { deferred, tick } from "./testSupport.js";
 
@@ -238,6 +238,36 @@ test("a missing or empty prompt gets 400 without calling the runner", async () =
   assert.equal(runner.calls.length, 0);
 });
 
+test("a prompt over the CLI-argument cap gets 400 without calling the runner", async () => {
+  const runner = okRunner();
+  const handler = makeHandler({ runner, config: baseConfig({ agyMaxBodyBytes: 1_048_576 }) });
+  const res = makeRes();
+  await handler(
+    authedReq({ method: "POST", url: "/run", body: JSON.stringify({ prompt: "x".repeat(100_001) }) }),
+    res
+  );
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, "prompt exceeds 100000 characters (agy receives it as a single CLI argument)");
+  assert.equal(runner.calls.length, 0);
+});
+
+test("a jsonSchema over the CLI-argument cap gets 400 without calling the runner", async () => {
+  const runner = okRunner();
+  const handler = makeHandler({ runner, config: baseConfig({ agyMaxBodyBytes: 1_048_576 }) });
+  const res = makeRes();
+  await handler(
+    authedReq({
+      method: "POST",
+      url: "/run",
+      body: JSON.stringify({ prompt: "p", jsonSchema: "x".repeat(100_001) }),
+    }),
+    res
+  );
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.json().error, "jsonSchema exceeds 100000 characters (agy receives it as a single CLI argument)");
+  assert.equal(runner.calls.length, 0);
+});
+
 test("an unparseable or non-object body gets 400", async () => {
   const handler = makeHandler();
   for (const body of ["{not json", '"just a string"', "[1,2]", "null"]) {
@@ -260,6 +290,26 @@ test("an oversized body gets 413 and the runner is never called", async () => {
   assert.equal(res.statusCode, 413);
   assert.deepEqual(res.json(), { ok: false, error: "body too large" });
   assert.equal(runner.calls.length, 0);
+});
+
+test("an oversized body destroys the request only after the 413 has flushed", async () => {
+  const handler = makeHandler({ config: baseConfig({ agyMaxBodyBytes: 10 }) });
+  const res = makeRes();
+  const listeners = {};
+  res.once = (event, cb) => {
+    listeners[event] = cb;
+  };
+  const req = authedReq({
+    method: "POST",
+    url: "/run",
+    body: JSON.stringify({ prompt: "x".repeat(100) }),
+  });
+  await handler(req, res);
+  assert.equal(res.statusCode, 413, "the 413 must be written");
+  assert.equal(req.destroyed, false, "destroy must not run before the response flushes");
+  assert.equal(typeof listeners.finish, "function", "a finish listener must be registered");
+  listeners.finish();
+  assert.equal(req.destroyed, true, "the finish callback must destroy the request");
 });
 
 test("two concurrent POST /run calls are in flight simultaneously (no handler serialization)", async () => {
@@ -359,6 +409,14 @@ test("GET of an unknown job id gets 404", async () => {
   assert.deepEqual(res.json(), { ok: false, error: "job not found" });
 });
 
+test("a job id with malformed percent-encoding gets 404, not a 500", async () => {
+  const handler = makeHandler();
+  const res = makeRes();
+  await handler(authedReq({ url: "/jobs/%zz" }), res);
+  assert.equal(res.statusCode, 404);
+  assert.deepEqual(res.json(), { ok: false, error: "job not found" });
+});
+
 test("GET /jobs lists jobs from list()", async () => {
   const jobStore = emptyJobStore();
   jobStore.list = () => [{ jobId: "j2", state: "running", createdAt: 2 }, { jobId: "j1", state: "succeeded", createdAt: 1, finishedAt: 3 }];
@@ -437,6 +495,10 @@ test("GET /run gets 405, POST /health gets 405, GET method on POST-only jobs id 
   res = makeRes();
   await handler(authedReq({ method: "DELETE", url: "/jobs" }), res);
   assert.equal(res.statusCode, 405);
+
+  res = makeRes();
+  await handler(authedReq({ method: "POST", url: "/jobs/some-id" }), res);
+  assert.equal(res.statusCode, 405);
 });
 
 test("an unknown path gets 404", async () => {
@@ -445,4 +507,94 @@ test("an unknown path gets 404", async () => {
   await handler(authedReq({ url: "/nope" }), res);
   assert.equal(res.statusCode, 404);
   assert.equal(res.json().ok, false);
+});
+
+// --- startWebServer ---
+
+function makeFakeHttp() {
+  const server = {
+    onceListeners: {},
+    onListeners: {},
+    listenPort: null,
+    once(event, cb) {
+      server.onceListeners[event] = cb;
+    },
+    on(event, cb) {
+      server.onListeners[event] = cb;
+    },
+    listen(port, cb) {
+      server.listenPort = port;
+      cb();
+    },
+  };
+  const httpImpl = {
+    connectionHandler: null,
+    createServer(handler) {
+      httpImpl.connectionHandler = handler;
+      return server;
+    },
+  };
+  return { httpImpl, server };
+}
+
+test("startWebServer resolves with the server once listening", async () => {
+  const { httpImpl, server } = makeFakeHttp();
+  const started = await startWebServer({ port: 8100, requestHandler: async () => {}, httpImpl });
+  assert.equal(started, server);
+  assert.equal(server.listenPort, 8100);
+});
+
+test("a post-listen server error is logged, not thrown or swallowed", async () => {
+  const { httpImpl, server } = makeFakeHttp();
+  const logged = [];
+  await startWebServer({
+    port: 8100,
+    requestHandler: async () => {},
+    httpImpl,
+    logImpl: (...args) => logged.push(args),
+  });
+  const persistent = server.onListeners.error;
+  assert.equal(typeof persistent, "function", "a persistent error listener must be registered");
+  persistent(new Error("EADDRINUSE later"));
+  assert.equal(logged.length, 1);
+  assert.deepEqual(logged[0], ["agy-gateway http server error:", "EADDRINUSE later"]);
+});
+
+test("a rejecting requestHandler gets a 500 from the wrapper", async () => {
+  const { httpImpl } = makeFakeHttp();
+  await startWebServer({ port: 8100, requestHandler: () => Promise.reject(new Error("boom")), httpImpl });
+
+  const res = { headersSent: false, statusCode: null, body: null };
+  res.writeHead = (status, headers) => {
+    res.statusCode = status;
+    res.headers = headers;
+  };
+  res.end = (body) => {
+    res.body = body;
+  };
+  httpImpl.connectionHandler({}, res);
+  await tick();
+  assert.equal(res.statusCode, 500);
+  assert.deepEqual(JSON.parse(res.body), { ok: false, error: "internal error" });
+});
+
+test("the 500 wrapper does not rewrite headers already sent", async () => {
+  const { httpImpl } = makeFakeHttp();
+  await startWebServer({ port: 8100, requestHandler: () => Promise.reject(new Error("boom")), httpImpl });
+
+  let wroteHead = false;
+  let ended = false;
+  const res = {
+    headersSent: true,
+    writeHead: () => {
+      wroteHead = true;
+    },
+    end: () => {
+      ended = true;
+    },
+  };
+  httpImpl.connectionHandler({}, res);
+  await tick();
+  assert.equal(wroteHead, false, "writeHead must not run after headers were sent");
+  assert.equal(ended, true, "the response must still be ended");
 });

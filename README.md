@@ -34,10 +34,10 @@ Request fields:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `prompt` | string | required | The prompt text |
+| `prompt` | string | required | The prompt text. Max 100,000 characters (agy receives it as a single CLI argument) |
 | `effort` | `low\|medium\|high` | `high` | agy reasoning effort |
 | `outputFormat` | `json\|text` | `json` | `json` returns agy's structured body; `text` returns raw stdout |
-| `jsonSchema` | string | — | Inline JSON schema; agy enforces structured output into `structured_output` |
+| `jsonSchema` | string | — | Inline JSON schema; agy enforces structured output into `structured_output`. Max 100,000 characters (single-CLI-argument limit) |
 | `timeoutMs` | int | 300000 | Capped at 900000. **The budget spans queue wait plus execution** — a request that expires while queued returns a timeout without ever starting agy |
 
 Success (200): `{"ok": true, "agy": {"conversation_id", "status": "SUCCESS", "response", "structured_output"?, "usage"}, "durationMs"}`.

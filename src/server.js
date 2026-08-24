@@ -29,6 +29,11 @@ const ERROR_KIND_STATUS = {
 // posted JSON (including an attacker-supplied onStart) is dropped.
 const ALLOWED_RUN_FIELDS = ["prompt", "effort", "outputFormat", "jsonSchema", "timeoutMs"];
 
+// prompt/jsonSchema are each passed to agy as one CLI argument, and
+// Linux limits a single argv arg to ~128KiB (E2BIG beyond). Cap well
+// under that so oversized inputs get a clear 400, not an opaque 502.
+const MAX_CLI_ARG_CHARS = 100_000;
+
 function sendJson(res, status, body) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body, null, 2));
@@ -68,9 +73,10 @@ async function readBody(req, maxBytes) {
     const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     total += buf.byteLength;
     if (total > maxBytes) {
-      // Guarded: real IncomingMessage has destroy(); plain test doubles
-      // may not.
-      if (typeof req.destroy === "function") req.destroy();
+      // Stop consuming, but don't destroy here: tearing down the socket
+      // before the 413 is written would make real clients see
+      // ECONNRESET instead of the response. The caller destroys after
+      // the response has flushed.
       return { tooLarge: true };
     }
     chunks.push(buf);
@@ -94,6 +100,15 @@ function parseRunRequest(raw) {
   }
   if (typeof body.prompt !== "string" || body.prompt.trim() === "") {
     return { ok: false, error: "prompt must be a non-empty string" };
+  }
+  // agy receives prompt and jsonSchema as single CLI arguments; Linux
+  // caps one argv arg at ~128KiB, so anything bigger dies as an opaque
+  // E2BIG 502. Reject it up front with a clear 400 instead.
+  if (body.prompt.length > MAX_CLI_ARG_CHARS) {
+    return { ok: false, error: `prompt exceeds ${MAX_CLI_ARG_CHARS} characters (agy receives it as a single CLI argument)` };
+  }
+  if (typeof body.jsonSchema === "string" && body.jsonSchema.length > MAX_CLI_ARG_CHARS) {
+    return { ok: false, error: `jsonSchema exceeds ${MAX_CLI_ARG_CHARS} characters (agy receives it as a single CLI argument)` };
   }
   const request = {};
   for (const field of ALLOWED_RUN_FIELDS) {
@@ -151,6 +166,13 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
     const body = await readBody(req, config.agyMaxBodyBytes);
     if (body.tooLarge) {
       sendJson(res, 413, { ok: false, error: "body too large" });
+      // Drop the connection only once the 413 has flushed -- destroying
+      // first tears down the shared socket and the client sees
+      // ECONNRESET, never the response. Guarded: plain test doubles may
+      // lack once()/destroy().
+      if (typeof res.once === "function" && typeof req.destroy === "function") {
+        res.once("finish", () => req.destroy());
+      }
       return undefined;
     }
     const parsed = parseRunRequest(body.raw);
@@ -219,7 +241,16 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
         sendJson(res, 405, { ok: false, error: "method not allowed" });
         return;
       }
-      const job = jobStore.get(decodeURIComponent(jobMatch[1]));
+      // Malformed percent-encoding throws URIError; server-minted UUIDs
+      // never need decoding to fail, so treat it as not-found.
+      let jobId;
+      try {
+        jobId = decodeURIComponent(jobMatch[1]);
+      } catch {
+        sendJson(res, 404, { ok: false, error: "job not found" });
+        return;
+      }
+      const job = jobStore.get(jobId);
       if (!job) {
         sendJson(res, 404, { ok: false, error: "job not found" });
         return;
@@ -239,9 +270,10 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
  * @param {number} params.port
  * @param {(req: object, res: object) => Promise<void>} params.requestHandler
  * @param {{createServer: Function}} [params.httpImpl]
+ * @param {(...args: unknown[]) => void} [params.logImpl]
  * @returns {Promise<import('node:http').Server>} resolves once listening.
  */
-export function startWebServer({ port, requestHandler, httpImpl = http }) {
+export function startWebServer({ port, requestHandler, httpImpl = http, logImpl = console.error }) {
   const server = httpImpl.createServer((req, res) => {
     Promise.resolve(requestHandler(req, res)).catch(() => {
       // The error itself is not echoed to the client (it could quote
@@ -249,6 +281,13 @@ export function startWebServer({ port, requestHandler, httpImpl = http }) {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: "internal error" }, null, 2));
     });
+  });
+  // The one-shot reject only covers the pre-listen window; after that a
+  // rejected promise is a no-op, so a persistent listener keeps
+  // post-listen 'error' events from vanishing (or crashing the process
+  // with zero listeners). Log policy: message only, never bodies.
+  server.on("error", (err) => {
+    logImpl("agy-gateway http server error:", err?.message ?? err);
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);

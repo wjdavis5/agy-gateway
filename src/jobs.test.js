@@ -200,3 +200,21 @@ test("sweep evicts all expired finished jobs and returns the count", async () =>
   assert.equal(store.get(liveId).state, "queued");
   assert.equal(store.sweep(), 0, "second sweep finds nothing to evict");
 });
+
+test("a rejecting runner.run() still fails the job via the defensive safety net", async () => {
+  const runner = createFakeRunner();
+  const clock = createClock(9_000);
+  const store = createJobStore({ runner, ttlMs: 1_000, now: clock.now });
+
+  const id = store.submit({ prompt: "p" });
+  runner.calls[0].reject(new Error("boom"));
+  await tick();
+
+  const job = store.get(id);
+  assert.equal(job.state, "failed");
+  assert.equal(job.error.ok, false);
+  assert.equal(job.error.errorKind, "exit");
+  assert.match(job.error.message, /runner rejected: boom/);
+  assert.equal(typeof job.error.durationMs, "number");
+  assert.ok(job.finishedAt >= job.createdAt);
+});
