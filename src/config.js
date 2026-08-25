@@ -114,5 +114,11 @@ export function loadConfig({
     // can read them). null = uploads disabled.
     agyUploadDir: optionalString("AGY_UPLOAD_DIR", null),
     agyMaxUploadBytes: optionalInt("AGY_MAX_UPLOAD_BYTES", 26_214_400),
+    // Central log shipping (lab pattern): the app POSTs its own log lines
+    // as OTLP/HTTP JSON to the LOCAL OTel Collector on this LXC, which
+    // holds the shared Loki push credential -- never this app. Standard
+    // OTel env var names for familiarity.
+    otelLogsEnabled: optionalBool("OTEL_LOGS_ENABLED", true),
+    otelLogsEndpoint: optionalString("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "http://127.0.0.1:4318/v1/logs"),
   };
 }

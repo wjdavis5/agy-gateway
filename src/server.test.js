@@ -709,3 +709,33 @@ test("non-GET on discovery routes gets 405", async () => {
     assert.equal(res.statusCode, 405);
   }
 });
+
+// --- Request access logging (startWebServer) ---
+
+test("startWebServer logs one line per request: method, path (no query), status, duration", async () => {
+  const logged = [];
+  let wrapped;
+  const httpImpl = {
+    createServer(handler) {
+      wrapped = handler;
+      return { on() {}, once() {}, listen(port, cb) { cb(); } };
+    },
+  };
+  await startWebServer({
+    port: 0,
+    httpImpl,
+    requestLogImpl: (line) => logged.push(line),
+    requestHandler: async (req, res) => {
+      res.writeHead(200, {});
+      res.end("{}");
+    },
+  });
+
+  const res = makeRes();
+  // makeRes stores statusCode via writeHead, like a real ServerResponse.
+  wrapped({ method: "POST", url: "/files?name=secret-title.png" }, res);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /^POST \/files 200 \d+ms$/);
+  assert.ok(!logged[0].includes("secret-title"), "query strings never reach the log");
+});

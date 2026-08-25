@@ -126,8 +126,24 @@ sets `NoNewPrivileges` and `PrivateTmp`. agy is **never** invoked with
 `--dangerously-skip-permissions`; `AGY_SANDBOX=true` additionally passes
 `--sandbox`.
 
-**Log policy:** journald logs carry method/path/status/jobId/duration at
-most — never prompt bodies, schemas, or agy results.
+**Log policy:** logs carry method/path/status/jobId/duration at most —
+never prompt bodies, schemas, upload filenames, or agy results (request
+lines log the URL path only, with query strings stripped).
+
+**Central log shipping (lab pattern, same as the plex-watcher):** the app
+POSTs each of its own log lines as OTLP/HTTP JSON via built-in `fetch`
+(`src/otelLog.js`, no SDK, fire-and-forget — a downed Collector never
+slows a request) to a local **OTel Collector** docker container
+(`otelcol`, `otel/opentelemetry-collector-contrib:0.158.0`, config at
+`/etc/otelcol/config.yaml` mode 644) which stamps `host: agy-gateway`
+and forwards to the central Loki on `192.168.0.34` with the shared
+`logshipper` credential — the credential lives ONLY in the Collector
+config (copied from the plex-watcher LXC's known-good copy; **never
+rotate it yourself** — the `C:\git\logging` repo owns rotation). Query in
+Grafana with `{host="agy-gateway"}`. Deploys never touch the Collector;
+both it and its config are container state a rebuild would lose
+(reinstall docker, re-copy `/etc/otelcol` from LXC 102, re-stamp the
+`host` value, `docker run` per the plex deploy skill's section 6).
 
 ## Environment variables (`/opt/agy-gateway/.env`, container-only)
 
@@ -146,6 +162,8 @@ most — never prompt bodies, schemas, or agy results.
 | `AGY_ADD_DIRS` | (empty) | Comma-separated dirs passed to agy as `--add-dir` (scoped workspace trust — file reads under these dirs are auto-approved headless; everything else stays denied). Set to `/mnt/agy-share` here |
 | `AGY_UPLOAD_DIR` | (unset = uploads off) | Where `POST /files` writes; must sit under an `AGY_ADD_DIRS` dir. Set to `/mnt/agy-share/uploads` here |
 | `AGY_MAX_UPLOAD_BYTES` | 26214400 | Upload size cap (25 MB) |
+| `OTEL_LOGS_ENABLED` | true | Ship log lines to the local OTel Collector |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `http://127.0.0.1:4318/v1/logs` | The local Collector's OTLP/HTTP endpoint |
 
 ## Container provisioning record (2026-08-24)
 

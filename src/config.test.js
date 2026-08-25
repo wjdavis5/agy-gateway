@@ -121,3 +121,18 @@ test("upload and add-dir settings parse with safe defaults", () => {
 
   assert.throws(() => load({ ...base, AGY_MAX_UPLOAD_BYTES: "zero" }), /AGY_MAX_UPLOAD_BYTES/);
 });
+
+test("otel log shipping settings parse with lab-standard defaults", () => {
+  const base = { AGY_GATEWAY_TOKEN: "t" };
+  const load = (env) => loadConfig({ env, loadEnvFileImpl: () => {} });
+
+  const defaults = load(base);
+  assert.equal(defaults.otelLogsEnabled, true);
+  assert.equal(defaults.otelLogsEndpoint, "http://127.0.0.1:4318/v1/logs");
+
+  const off = load({ ...base, OTEL_LOGS_ENABLED: "false" });
+  assert.equal(off.otelLogsEnabled, false);
+
+  const custom = load({ ...base, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://otel:4318/v1/logs" });
+  assert.equal(custom.otelLogsEndpoint, "http://otel:4318/v1/logs");
+});

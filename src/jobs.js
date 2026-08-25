@@ -21,7 +21,12 @@ import crypto from "node:crypto";
  *   now?: () => number,
  * }} options
  */
-export function createJobStore({ runner, ttlMs, now = Date.now }) {
+export function createJobStore({ runner, ttlMs, now = Date.now, logImpl = null }) {
+  // Lifecycle lines carry job ids and states only -- never prompt or
+  // result content (log policy).
+  const log = (line) => {
+    if (logImpl) logImpl(line);
+  };
   /** @type {Map<string, {jobId: string, state: string, createdAt: number, startedAt?: number, finishedAt?: number, result?: object, error?: object}>} */
   const jobs = new Map();
 
@@ -52,17 +57,21 @@ export function createJobStore({ runner, ttlMs, now = Date.now }) {
     const onStart = () => {
       job.state = "running";
       job.startedAt = now();
+      log(`job ${jobId} running`);
     };
 
+    log(`job ${jobId} queued`);
     runner.run({ ...request, onStart }).then(
       (result) => {
         job.finishedAt = now();
         if (result?.ok === true) {
           job.state = "succeeded";
           job.result = result;
+          log(`job ${jobId} succeeded`);
         } else {
           job.state = "failed";
           job.error = result;
+          log(`job ${jobId} failed (${result?.errorKind ?? "unknown"})`);
         }
       },
       (error) => {
@@ -76,6 +85,7 @@ export function createJobStore({ runner, ttlMs, now = Date.now }) {
           message: `runner rejected: ${error?.message ?? String(error)}`,
           durationMs: job.finishedAt - job.createdAt,
         };
+        log(`job ${jobId} failed (runner-rejected)`);
       }
     );
 

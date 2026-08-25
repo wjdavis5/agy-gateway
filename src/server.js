@@ -334,14 +334,29 @@ export function createRequestHandler({ config, runner, jobStore, healthProbe, no
  * @param {(...args: unknown[]) => void} [params.logImpl]
  * @returns {Promise<import('node:http').Server>} resolves once listening.
  */
-export function startWebServer({ port, requestHandler, httpImpl = http, logImpl = console.error }) {
+export function startWebServer({ port, requestHandler, httpImpl = http, logImpl = console.error, requestLogImpl = null }) {
   const server = httpImpl.createServer((req, res) => {
-    Promise.resolve(requestHandler(req, res)).catch(() => {
-      // The error itself is not echoed to the client (it could quote
-      // request content); a bare 500 is all an HTTP caller needs.
-      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: false, error: "internal error" }, null, 2));
-    });
+    const startedAt = Date.now();
+    const logRequest = () => {
+      if (!requestLogImpl) return;
+      // Path only, never the query string (an upload's ?name= hint is
+      // caller content) -- consistent with the no-bodies log policy.
+      let pathname = req.url ?? "";
+      try {
+        pathname = new URL(req.url, "http://localhost").pathname;
+      } catch {
+        // Unparseable URL: fall back to the raw value.
+      }
+      requestLogImpl(`${req.method} ${pathname} ${res.statusCode} ${Date.now() - startedAt}ms`);
+    };
+    Promise.resolve(requestHandler(req, res))
+      .catch(() => {
+        // The error itself is not echoed to the client (it could quote
+        // request content); a bare 500 is all an HTTP caller needs.
+        if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: false, error: "internal error" }, null, 2));
+      })
+      .finally(logRequest);
   });
   // The one-shot reject only covers the pre-listen window; after that a
   // rejected promise is a no-op, so a persistent listener keeps

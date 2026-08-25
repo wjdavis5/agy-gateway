@@ -10,10 +10,29 @@ import { loadConfig } from "./src/config.js";
 import { createAgyRunner } from "./src/agyRunner.js";
 import { createJobStore } from "./src/jobs.js";
 import { createRequestHandler, startWebServer } from "./src/server.js";
+import { createOtelLogShipper } from "./src/otelLog.js";
 
 const execFileAsync = promisify(execFile);
 
 const config = loadConfig();
+
+// Central log shipping (see src/otelLog.js): every line below goes to
+// stdout/journald AND, fire-and-forget, to the local OTel Collector.
+const shipper = config.otelLogsEnabled
+  ? createOtelLogShipper({
+      endpoint: config.otelLogsEndpoint,
+      onError: (error) => console.error("otel log shipping failed:", error?.message ?? error),
+    })
+  : null;
+const logInfo = (line) => {
+  console.log(line);
+  shipper?.send(line, "info");
+};
+const logError = (...args) => {
+  const line = args.map((a) => (a instanceof Error ? a.message : String(a))).join(" ");
+  console.error(line);
+  shipper?.send(line, "error");
+};
 
 const runner = createAgyRunner({
   agyPath: config.agyPath,
@@ -25,7 +44,7 @@ const runner = createAgyRunner({
   addDirs: config.agyAddDirs,
 });
 
-const jobStore = createJobStore({ runner, ttlMs: config.jobTtlMs });
+const jobStore = createJobStore({ runner, ttlMs: config.jobTtlMs, logImpl: logInfo });
 
 // Health probe: `agy --version` runs once at startup and is cached (it
 // won't change under a running gateway); the cheap fs access check runs
@@ -51,11 +70,11 @@ async function healthProbe() {
 const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"));
 
 const requestHandler = createRequestHandler({ config, runner, jobStore, healthProbe, version });
-await startWebServer({ port: config.port, requestHandler });
+await startWebServer({ port: config.port, requestHandler, logImpl: logError, requestLogImpl: logInfo });
 
 setInterval(jobStore.sweep, 3_600_000).unref();
 
 // Awaited only for the log line -- the server is already accepting.
 await versionProbe;
 // Log policy: never prompts/results -- this line and nothing chattier.
-console.log(`agy-gateway listening on port ${config.port} (agy: ${config.agyPath}, version: ${cachedVersion ?? "unknown"})`);
+logInfo(`agy-gateway listening on port ${config.port} (agy: ${config.agyPath}, version: ${cachedVersion ?? "unknown"})`);

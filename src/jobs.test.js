@@ -218,3 +218,17 @@ test("a rejecting runner.run() still fails the job via the defensive safety net"
   assert.equal(typeof job.error.durationMs, "number");
   assert.ok(job.finishedAt >= job.createdAt);
 });
+
+test("job lifecycle transitions are logged with ids and states only, never prompt content", async () => {
+  const lines = [];
+  const runner = createFakeRunner();
+  const store = createJobStore({ runner, ttlMs: 1_000, logImpl: (l) => lines.push(l) });
+
+  const id = store.submit({ prompt: "super secret prompt content" });
+  runner.calls[0].request.onStart();
+  runner.calls[0].resolve({ ok: false, errorKind: "timeout", message: "too slow", durationMs: 1 });
+  await tick();
+
+  assert.deepEqual(lines, [`job ${id} queued`, `job ${id} running`, `job ${id} failed (timeout)`]);
+  assert.ok(!lines.some((l) => l.includes("secret")), "no prompt content in logs");
+});
