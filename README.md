@@ -9,8 +9,11 @@ Runs as a systemd service in its own Debian 12 LXC (**VMID 105,
 `192.168.0.92:8100`**) on the Proxmox host `pve01`. LAN-only by design —
 never exposed through the Cloudflare tunnel.
 
+Part of a home-lab setup; the canonical lab inventory and docs index live in the
+lab root's `CLAUDE.md` (`C:\git` on the lab desktop).
+
 - Deploy / rollback / status: [`.claude/skills/deploy-agy-gateway/SKILL.md`](.claude/skills/deploy-agy-gateway/SKILL.md)
-- Plan this was built from: `docs/plans/2026-08-24-001-feat-agy-gateway-plan.md` in the lab-manager repo
+- Plan this was built from: `docs/plans/2026-08-24-001-feat-agy-gateway-plan.md` under the lab root (`C:\git`)
 
 ## API
 
