@@ -1,0 +1,17 @@
+# Secrets — the gateway bearer token lives in the container-only /opt/agy-gateway/.env,
+# but never let a local .env get committed here either.
+.env
+.env.*
+
+# Dependencies (service is zero-dep today; guard against future installs)
+node_modules/
+
+# Logs and runtime
+*.log
+logs/
+npm-debug.log*
+*.pid
+
+# OS cruft
+.DS_Store
+Thumbs.db
