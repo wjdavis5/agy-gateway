@@ -41,6 +41,8 @@ const runner = createAgyRunner({
   maxTimeoutMs: config.agyTimeoutMaxMs,
   defaultEffort: config.agyEffort,
   sandbox: config.agySandbox,
+  skipPermissionsMode: config.agySkipPermissionsMode,
+  uploadDir: config.agyUploadDir,
   addDirs: config.agyAddDirs,
 });
 

@@ -57,7 +57,7 @@ test("json success: resolves ok:true with the parsed agy body and the verified a
   const ptIdx = args.indexOf("--print-timeout");
   assert.ok(ptIdx > -1);
   assert.equal(args[ptIdx + 1], "300s");
-  // KTD6: never skip permissions.
+  // KTD6: default never skips permissions (opt-in only, tested below).
   assert.ok(!args.includes("--dangerously-skip-permissions"));
 });
 
@@ -96,6 +96,46 @@ test("sandbox:true appends --sandbox; default omits it", async () => {
 
   await createAgyRunner({ agyPath: "agy", execFileImpl }).run({ prompt: "p" });
   assert.ok(!calls[1].includes("--sandbox"));
+});
+
+// 3b. skipPermissionsMode (KTD6 opt-in)
+test("skipPermissionsMode default 'off' never appends --dangerously-skip-permissions", async () => {
+  const calls = [];
+  const execFileImpl = async (file, args) => { calls.push(args); return agyStdout({}); };
+  await createAgyRunner({ agyPath: "agy", execFileImpl }).run({ prompt: "look at /mnt/agy-share/uploads/x.png" });
+  assert.ok(!calls[0].includes("--dangerously-skip-permissions"));
+});
+
+test("skipPermissionsMode 'always' appends the flag for every prompt", async () => {
+  const calls = [];
+  const execFileImpl = async (file, args) => { calls.push(args); return agyStdout({}); };
+  await createAgyRunner({ agyPath: "agy", skipPermissionsMode: "always", execFileImpl }).run({ prompt: "plain text" });
+  assert.ok(calls[0].includes("--dangerously-skip-permissions"));
+});
+
+test("skipPermissionsMode 'image-only' skips only when the prompt references uploadDir", async () => {
+  const calls = [];
+  const execFileImpl = async (file, args) => { calls.push(args); return agyStdout({}); };
+  const runner = createAgyRunner({
+    agyPath: "agy",
+    skipPermissionsMode: "image-only",
+    uploadDir: "/mnt/agy-share/uploads",
+    execFileImpl,
+  });
+  // references the upload dir -> skipped
+  await runner.run({ prompt: "Describe the image at /mnt/agy-share/uploads/abc.png" });
+  assert.ok(calls[0].includes("--dangerously-skip-permissions"), "image request should skip perms");
+  // plain text -> NOT skipped
+  await runner.run({ prompt: "What is the capital of France?" });
+  assert.ok(!calls[1].includes("--dangerously-skip-permissions"), "text request must stay locked down");
+});
+
+test("skipPermissionsMode 'image-only' with no uploadDir never skips", async () => {
+  const calls = [];
+  const execFileImpl = async (file, args) => { calls.push(args); return agyStdout({}); };
+  await createAgyRunner({ agyPath: "agy", skipPermissionsMode: "image-only", execFileImpl })
+    .run({ prompt: "Describe the image at /mnt/agy-share/uploads/abc.png" });
+  assert.ok(!calls[0].includes("--dangerously-skip-permissions"));
 });
 
 // 3b. Kill signal

@@ -125,9 +125,12 @@ conversation ids, no interference). The queue is unbounded by design
 ("queue rather than fail") — the health endpoint exposes depth.
 
 The service and agy run as root inside an **unprivileged** LXC; the unit
-sets `NoNewPrivileges` and `PrivateTmp`. agy is **never** invoked with
-`--dangerously-skip-permissions`; `AGY_SANDBOX=true` additionally passes
-`--sandbox`.
+sets `NoNewPrivileges` and `PrivateTmp`. By default agy is **never** invoked
+with `--dangerously-skip-permissions` (KTD6) — but `AGY_SKIP_PERMISSIONS_MODE`
+now opts in (see the env table): `image-only` (currently deployed) passes the
+flag ONLY for prompts referencing the upload dir so agy can view uploaded
+images, while plain text prompts keep the default deny-on-tool-call behavior.
+`AGY_SANDBOX=true` additionally passes `--sandbox`.
 
 **Log policy:** logs carry method/path/status/jobId/duration at most —
 never prompt bodies, schemas, upload filenames, or agy results (request
@@ -160,6 +163,7 @@ both it and its config are container state a rebuild would lose
 | `AGY_MAX_CONCURRENT` | 3 | Parallel agy processes |
 | `AGY_EFFORT` | high | Default reasoning effort |
 | `AGY_SANDBOX` | false | Pass `--sandbox` on every run |
+| `AGY_SKIP_PERMISSIONS_MODE` | `off` | KTD6 opt-in for `--dangerously-skip-permissions` (needed for image/vision analysis — agy's image-view tool uses a `command`-permission tool headless mode otherwise auto-denies). `off` = never skip (safe default). `image-only` = skip ONLY for prompts referencing `AGY_UPLOAD_DIR`, so text prompts stay locked down (**deployed here**). `always` = skip for every prompt (whole gateway command-capable to any token holder). Caveat: `image-only`'s trigger is a substring match on the prompt path — it bounds accidental exposure, not a determined token holder |
 | `AGY_MAX_BODY_BYTES` | 1048576 | Request body cap |
 | `JOB_TTL_MS` | 86400000 | Finished-job retention |
 | `AGY_ADD_DIRS` | (empty) | Comma-separated dirs passed to agy as `--add-dir` (scoped workspace trust — file reads under these dirs are auto-approved headless; everything else stays denied). Set to `/mnt/agy-share` here |

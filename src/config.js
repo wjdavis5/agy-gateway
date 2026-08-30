@@ -6,6 +6,7 @@
 // tests can inject their own env object and .env loader.
 
 const VALID_EFFORTS = new Set(["low", "medium", "high"]);
+const VALID_SKIP_MODES = new Set(["off", "image-only", "always"]);
 
 /**
  * Loads and validates the gateway's configuration.
@@ -24,6 +25,7 @@ const VALID_EFFORTS = new Set(["low", "medium", "high"]);
  *   agyMaxConcurrent: number,
  *   agyEffort: string,
  *   agySandbox: boolean,
+ *   agySkipPermissionsMode: string,
  *   agyMaxBodyBytes: number,
  *   jobTtlMs: number,
  *   agyAddDirs: string[],
@@ -102,6 +104,15 @@ export function loadConfig({
     agyMaxConcurrent: optionalInt("AGY_MAX_CONCURRENT", 3),
     agyEffort: optionalEnum("AGY_EFFORT", "high", VALID_EFFORTS),
     agySandbox: optionalBool("AGY_SANDBOX", false),
+    // KTD6: --dangerously-skip-permissions is OFF by default. Opt in only to
+    // enable agy's image-view tool (it needs the `command` permission, which
+    // headless mode auto-denies). Three modes:
+    //   off        - never skip (safe default; image/vision analysis won't work)
+    //   image-only - skip ONLY for prompts that reference the upload dir, so
+    //                plain text prompts stay locked down (recommended)
+    //   always     - skip for EVERY prompt (the whole gateway becomes
+    //                command-capable to anyone with the bearer token)
+    agySkipPermissionsMode: optionalEnum("AGY_SKIP_PERMISSIONS_MODE", "off", VALID_SKIP_MODES),
     agyMaxBodyBytes: optionalInt("AGY_MAX_BODY_BYTES", 1_048_576),
     jobTtlMs: optionalInt("JOB_TTL_MS", 86_400_000),
     // Directories agy is granted scoped workspace trust over (--add-dir),
