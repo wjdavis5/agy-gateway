@@ -39,8 +39,21 @@ import { promisify } from "node:util";
 //      "agy-status", with stderrTail carrying the denial detail.
 //
 // Deliberate choices:
-//   - NEVER pass --dangerously-skip-permissions (KTD6, settled policy) --
-//     a tool call the agent can't auto-run is simply not run.
+//   - --dangerously-skip-permissions is OFF by default (KTD6, settled
+//     policy) -- a tool call the agent can't auto-run is simply not run,
+//     so a hostile prompt can't make agy touch the filesystem or shell.
+//     It is opt-in via skipPermissionsMode (AGY_SKIP_PERMISSIONS_MODE),
+//     added 2026-08-30 to enable image/vision analysis, which needs a
+//     `command`-permission tool headless mode otherwise auto-denies:
+//       "off"        -- never skip.
+//       "image-only" -- skip ONLY when the prompt references uploadDir, so
+//                       the common text path stays locked down. NOTE: the
+//                       trigger is a substring match on the prompt, so a
+//                       caller with the token can opt in by naming that path
+//                       -- it bounds ACCIDENTAL exposure, not a determined
+//                       token-holder. Still far tighter than "always".
+//       "always"     -- skip for every prompt; the whole gateway is
+//                       command-capable to anyone with the token.
 //   - The plex precedent discards stderr; here every failure keeps a
 //     stderr tail, because agy failure detail lives there.
 //   - The execFile timeout kills with SIGKILL, not the SIGTERM default:
@@ -99,6 +112,8 @@ export function createAgyRunner({
   maxTimeoutMs = 900_000,
   defaultEffort = "high",
   sandbox = false,
+  skipPermissionsMode = "off",
+  uploadDir = null,
   addDirs = [],
   execFileImpl = promisify(execFile),
 } = {}) {
@@ -161,6 +176,17 @@ export function createAgyRunner({
     args.push("--effort", req.effort);
     for (const dir of addDirs) args.push("--add-dir", dir);
     args.push("--print-timeout", `${Math.ceil(remainingMs / 1000)}s`);
+    // KTD6 opt-in: auto-approve all tools so agy can run the `command` tool it
+    // uses to view images. "image-only" scopes it to prompts referencing an
+    // uploaded file; plain text prompts never get command capability.
+    const skipPerms =
+      skipPermissionsMode === "always" ||
+      (skipPermissionsMode === "image-only" &&
+        typeof uploadDir === "string" &&
+        uploadDir !== "" &&
+        typeof req.prompt === "string" &&
+        req.prompt.includes(uploadDir));
+    if (skipPerms) args.push("--dangerously-skip-permissions");
     if (sandbox) args.push("--sandbox");
 
     let stdout;
