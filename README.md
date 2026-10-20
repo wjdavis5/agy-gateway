@@ -276,7 +276,7 @@ tests mock `execFileImpl` and pass duck-typed req/res objects.
 
 ## Updating the `agy` CLI in the k3s image
 
-`agy` has no package; it updates itself. The Linux binary baked into the image (`build-context/agy`, gitignored, ~211 MB) is refreshed like this (2026-10-08: 1.2.0 to 1.3.1):
+`agy` has no package; it updates itself. The Linux binary baked into the image (`build-context/agy`, gitignored, ~220 MB) is refreshed like this (2026-10-08: 1.2.0 to 1.3.1; 2026-10-20: 1.3.1 to 1.4.3, image `v20261020`). Note that the running pod also self-updates in place between rebuilds (the 1.3.1 image was found running 1.3.6 while `/health` still reported 1.3.1, because the version is read once at process start), so a rebuild is about reproducibility, not freshness:
 
 1. In a throwaway container from the current image on the registry VM: `docker run --name agyup --entrypoint sh localhost:5000/agy-gateway:<tag> -c "agy update"`, then `docker cp agyup:/usr/local/bin/agy ...` and replace `build-context/agy` (keep the old one as `build-context/agy-<ver>.prev`, which is also gitignored).
 2. Build and push a new tag (never reuse one): `C:/git/repos/k3s-cluster/registry/build-push.sh agy-gateway . v<date>-N -- --exclude='*.prev' --exclude=docs --exclude=.claude`.
